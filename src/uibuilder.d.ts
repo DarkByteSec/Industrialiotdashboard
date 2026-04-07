@@ -1,0 +1,1 @@
+declare module 'node-red-contrib-uibuilder/front-end/uibuilder.esm.js';

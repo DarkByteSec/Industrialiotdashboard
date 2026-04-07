@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Worker, initialWorkers, Alert } from '../data/mockData';
+// @ts-ignore
+import uibuilder from 'node-red-contrib-uibuilder/front-end/uibuilder.esm.js';
 
 interface WorkerContextType {
   workers: Worker[];
@@ -40,87 +42,79 @@ export const WorkerProvider: React.FC<WorkerProviderProps> = ({ children }) => {
     };
   }, []);
 
-  // Simulate real-time worker movement
+  // Receive real-time data from Node-RED via uibuilder
   useEffect(() => {
-    const interval = setInterval(() => {
-      setWorkers((prevWorkers) =>
-        prevWorkers.map((worker) => {
-          // Skip workers in danger state
-          if (worker.status === 'danger') return worker;
+    uibuilder.start();
 
-          // Random small movement
-          const dx = (Math.random() - 0.5) * 20;
-          const dy = (Math.random() - 0.5) * 20;
-          
-          const newX = Math.max(30, Math.min(720, worker.position.x + dx));
-          const newY = Math.max(30, Math.min(390, worker.position.y + dy));
+    uibuilder.onChange('msg', (newMsg: any) => {
+      if (newMsg.payload && newMsg.payload.id) {
+        const data = newMsg.payload;
 
-          return {
-            ...worker,
-            position: { x: newX, y: newY },
-          };
-        })
-      );
-    }, 3000); // Update every 3 seconds
+        setWorkers((prevWorkers) =>
+          prevWorkers.map((worker) => {
+            if (worker.id !== data.id) return worker;
 
-    return () => clearInterval(interval);
-  }, []);
+            // 1. أخذ البيانات الجديدة لو مبعوتة، أو الاحتفاظ بالقديمة لو مش مبعوتة
+            let currentHeartRate = data.heartRate !== undefined ? data.heartRate : worker.heartRate;
+            let currentTemp = data.temperature !== undefined ? data.temperature : worker.temperature;
+            let currentState = data.state !== undefined ? data.state : worker.state;
+            let currentPosition = data.position !== undefined ? data.position : worker.position;
+            let currentInZone = data.inZone !== undefined ? data.inZone : worker.inZone;
 
-  // Simulate real-time vital signs updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setWorkers((prevWorkers) =>
-        prevWorkers.map((worker) => {
-          let newHeartRate = worker.heartRate + (Math.random() - 0.5) * 4;
-          let newTemp = worker.temperature + (Math.random() - 0.5) * 0.2;
-
-          // Keep within realistic ranges
-          newHeartRate = Math.max(60, Math.min(130, newHeartRate));
-          newTemp = Math.max(36, Math.min(39, newTemp));
-
-          // Update status based on vitals
-          let newStatus = worker.status;
-          let newState = worker.state;
-
-          if (worker.state !== 'Fall Detected' && worker.state !== 'SOS') {
-            if (newHeartRate > 110 || newTemp > 37.8) {
+            // 2. تحديد حالة الخطر بناءً على الداتا الجديدة
+            let newStatus = worker.status;
+            if (currentState === 'SOS' || currentState === 'Fall Detected' || currentHeartRate > 110 || currentTemp > 37.8) {
               newStatus = 'danger';
-            } else if (newHeartRate > 90 || newTemp > 37.3) {
+            } else if (currentHeartRate > 90 || currentTemp > 37.3) {
               newStatus = 'warning';
             } else {
               newStatus = 'safe';
             }
-          }
 
-          // Trigger notification if status changed to danger or warning
-          if (notificationCallback && newStatus !== worker.status && (newStatus === 'danger' || newStatus === 'warning')) {
-            const alertType = newHeartRate > 110 ? 'high_heart_rate' : 'high_temperature';
-            const notification = {
-              id: `alert-${Date.now()}-${worker.id}`,
-              workerId: worker.id,
-              workerName: worker.name,
-              type: alertType,
-              message: alertType === 'high_heart_rate' 
-                ? `Heart rate elevated to ${Math.round(newHeartRate)} BPM`
-                : `Body temperature elevated to ${newTemp.toFixed(1)}°C`,
-              timestamp: new Date(),
-              status: 'active' as const,
+            // 3. التعديل الذكي: التأكد إن في خطر "جديد" حصل عشان نطلع صوت ونسجله
+            let shouldAlert = false;
+            let alertType = 'high_heart_rate';
+            let alertMsg = '';
+
+            if (currentState === 'SOS' && worker.state !== 'SOS') {
+              shouldAlert = true; alertType = 'sos'; alertMsg = 'SOS Button Pressed';
+            } else if (currentState === 'Fall Detected' && worker.state !== 'Fall Detected') {
+              shouldAlert = true; alertType = 'fall'; alertMsg = 'Fall Detected';
+            } else if (currentHeartRate > 110 && worker.heartRate <= 110) {
+              shouldAlert = true; alertType = 'high_heart_rate'; alertMsg = `Heart rate elevated to ${Math.round(currentHeartRate)} BPM`;
+            } else if (currentTemp > 37.8 && worker.temperature <= 37.8) {
+              shouldAlert = true; alertType = 'high_temperature'; alertMsg = `Body temperature elevated to ${currentTemp}°C`;
+            }
+
+            let updatedAlerts = [...worker.alerts];
+
+            // لو في أي خطر من اللي فوق لسه حاصل حالا، طلع الصوت وسجله في الـ Charts
+            if (notificationCallback && shouldAlert) {
+              const newAlert = {
+                id: `alert-${Date.now()}-${worker.id}`,
+                type: alertType as any,
+                message: alertMsg,
+                timestamp: new Date(),
+              };
+              updatedAlerts = [newAlert, ...updatedAlerts];
+              notificationCallback({ ...newAlert, workerId: worker.id, workerName: worker.name, status: 'active' });
+            }
+
+            // 4. حفظ وتحديث بيانات العامل بالكامل
+            return {
+              ...worker,
+              heartRate: Math.round(currentHeartRate),
+              temperature: Math.round(currentTemp * 10) / 10,
+              state: currentState,
+              position: currentPosition,
+              inZone: currentInZone,
+              status: newStatus,
+              alerts: updatedAlerts, // عشان الـ Charts تشتغل
             };
-            notificationCallback(notification);
-          }
-
-          return {
-            ...worker,
-            heartRate: Math.round(newHeartRate),
-            temperature: Math.round(newTemp * 10) / 10,
-            status: newStatus,
-            state: newState,
-          };
-        })
-      );
-    }, 2000); // Update every 2 seconds
-
-    return () => clearInterval(interval);
+          })
+        );
+      }
+    });
   }, [notificationCallback]);
 
   const updateWorkerPosition = (workerId: string, position: { x: number; y: number }) => {

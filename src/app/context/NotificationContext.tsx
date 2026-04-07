@@ -161,16 +161,24 @@ export const NotificationProvider: React.FC<NotificationProviderProps> = ({ chil
 
   const unreadCount = notifications.filter((n) => n.status === 'active').length;
 
-  // Mock alert sound player
+  // Real alert sound player
   const playAlertSound = (type: AlertType['type']) => {
     const soundType = ALERT_SOUNDS[type] || 'notification-beep';
-    console.log(`🔊 Playing ${soundType} for ${type}`);
-    
-    // In production, you would play actual audio:
-    // const audio = new Audio(`/sounds/${soundType}.mp3`);
-    // audio.play();
-  };
+    const audioPath = `/sounds/${soundType}.mp3`;
 
+    console.log(`🔊 Attempting to play: ${audioPath}`);
+
+    const audio = new Audio(audioPath);
+
+    // الجزء ده هيشتغل لو الملف مش موجود (Error 404)
+    audio.onerror = () => {
+      console.error(`❌ Sound file is missing! Please make sure you have the file exactly at: public${audioPath}`);
+    };
+
+    audio.play().catch(error => {
+      console.warn("Autoplay prevented or playback error. User interaction might be needed:", error);
+    });
+  };
   return (
     <NotificationContext.Provider
       value={{

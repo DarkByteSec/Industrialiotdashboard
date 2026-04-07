@@ -32,6 +32,9 @@ import { Badge } from '../components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Separator } from '../components/ui/separator';
 import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 export const WorkerDetails: React.FC = () => {
   const { workerId } = useParams<{ workerId: string }>();
@@ -58,6 +61,65 @@ export const WorkerDetails: React.FC = () => {
     endDate?: Date;
   }>({ type: 'month' });
 
+  const handleExportWorkerData = () => {
+    if (!worker) return;
+
+    // 1. معلومات العامل الأساسية
+    const workerInfo = [{
+      "ID": worker.id,
+      "Name": worker.name,
+      "Status": worker.status,
+      "Heart Rate": worker.heartRate,
+      "Temperature": worker.temperature,
+      "Total Incidents": worker.alerts.length,
+    }];
+
+    // 2. سجل الحوادث الخاص بالعامل ده بس
+    const incidentHistory = worker.alerts.map(alert => ({
+      "Date & Time": new Date(alert.timestamp).toLocaleString(),
+      "Incident Type": alert.type,
+      "Details": alert.message
+    }));
+
+    const wb = XLSX.utils.book_new();
+    // عملنا شيتين جوه ملف الإكسيل: واحد لمعلوماته، والتاني لتاريخه
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(workerInfo), "Worker Info");
+    if (incidentHistory.length > 0) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(incidentHistory), "Incident History");
+    }
+
+    XLSX.writeFile(wb, `${worker.name}_Personal_Report.xlsx`);
+  };
+
+  const handleExportWorkerDataPDF = () => {
+    if (!worker) return;
+    toast.success(`Exporting ${worker.name}'s data to PDF...`);
+
+    const doc = new jsPDF();
+    
+    // عنوان التقرير وبيانات العامل
+    doc.text(`Worker Safety Report: ${worker.name}`, 14, 15);
+    doc.setFontSize(11);
+    doc.text(`ID: ${worker.id} | Status: ${worker.status.toUpperCase()} | Zone: ${worker.zone}`, 14, 25);
+
+    // جدول تاريخ الحوادث
+    if (worker.alerts.length > 0) {
+      doc.text("Incident History:", 14, 35);
+      const tableColumn = ["Date & Time", "Incident Type", "Details"];
+      const tableRows = worker.alerts.map(alert => [
+        new Date(alert.timestamp).toLocaleString(),
+        alert.type,
+        alert.message
+      ]);
+      
+      autoTable(doc, { head: [tableColumn], body: tableRows, startY: 40 });
+    } else {
+      doc.text("No incidents recorded for this worker.", 14, 35);
+    }
+
+    doc.save(`${worker.name}_Personal_Report.pdf`);
+  };
+
   useEffect(() => {
     if (worker) {
       setZoneActivityData(generateZoneActivity(worker.id, worker.inZone));
@@ -74,8 +136,8 @@ export const WorkerDetails: React.FC = () => {
     const interval = setInterval(() => {
       setZoneActivityData((prevData) => {
         const now = new Date();
-        const timeStr = now.toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
+        const timeStr = now.toLocaleTimeString('en-US', {
+          hour: '2-digit',
           minute: '2-digit',
           second: '2-digit',
         });
@@ -283,7 +345,7 @@ export const WorkerDetails: React.FC = () => {
                     </Badge>
                   </div>
                   <Separator className="bg-slate-200 dark:bg-slate-800" />
-                  
+
                   <div className="space-y-3">
                     <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg transition-colors duration-300">
                       <div className={`p-2 rounded-lg ${worker.heartRate > 100 ? 'bg-red-500/20' : 'bg-blue-500/20'}`}>
@@ -346,8 +408,8 @@ export const WorkerDetails: React.FC = () => {
             >
               <DataFilterPanel
                 onFilterChange={applyDateFilter}
-                onExportExcel={handleExportExcel}
-                onExportPDF={handleExportPDF}
+                onExportExcel={handleExportWorkerData} // <--- ربطناها بالدالة بتاعتك
+                onExportPDF={handleExportWorkerDataPDF}
                 onImportData={handleImportData}
               />
             </motion.div>
