@@ -1,0 +1,244 @@
+[
+  {
+    "id": "mqtt_broker_hivemq",
+    "type": "mqtt-broker",
+    "name": "HiveMQ Cloud",
+    "broker": "YOUR_HIVEMQ_BROKER.s1.eu.hivemq.cloud",
+    "port": "8883",
+    "tls": true,
+    "clientid": "nodered-eyesafeu",
+    "autoConnect": true,
+    "usetls": true,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "credentials": {
+      "user": "YOUR_HIVEMQ_USERNAME",
+      "password": "YOUR_HIVEMQ_PASSWORD"
+    }
+  },
+  {
+    "id": "tab_eyesafeu",
+    "type": "tab",
+    "label": "EyeSafeU Main Flow",
+    "disabled": false,
+    "info": "Main flow for receiving MQTT data and routing to uibuilder + Supabase"
+  },
+  {
+    "id": "mqtt_in_vitals",
+    "type": "mqtt in",
+    "z": "tab_eyesafeu",
+    "name": "Receive Vitals",
+    "topic": "eyesafeu/worker/+/vitals",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker_hivemq",
+    "x": 120,
+    "y": 80,
+    "wires": [["parse_vitals"]]
+  },
+  {
+    "id": "mqtt_in_state",
+    "type": "mqtt in",
+    "z": "tab_eyesafeu",
+    "name": "Receive State (SOS/Fall)",
+    "topic": "eyesafeu/worker/+/state",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker_hivemq",
+    "x": 120,
+    "y": 160,
+    "wires": [["parse_state"]]
+  },
+  {
+    "id": "mqtt_in_zone",
+    "type": "mqtt in",
+    "z": "tab_eyesafeu",
+    "name": "Receive Zone",
+    "topic": "eyesafeu/worker/+/zone",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "mqtt_broker_hivemq",
+    "x": 120,
+    "y": 240,
+    "wires": [["parse_zone"]]
+  },
+  {
+    "id": "parse_vitals",
+    "type": "function",
+    "z": "tab_eyesafeu",
+    "name": "Parse Vitals",
+    "func": "// topic: eyesafeu/worker/W001/vitals\n// payload: { heartRate: 75, temperature: 36.5 }\n\nconst topicParts = msg.topic.split('/');\nconst workerId = topicParts[2];\n\nmsg.payload = {\n    id: workerId,\n    heartRate: msg.payload.heartRate || msg.payload.heart_rate,\n    temperature: msg.payload.temperature || msg.payload.body_temp\n};\n\n// حفظ للـ Supabase\nmsg.supabaseTable = 'vital_signs';\nmsg.supabaseRow = {\n    worker_id: workerId,\n    heart_rate: msg.payload.heartRate,\n    body_temp: msg.payload.temperature\n};\n\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 80,
+    "wires": [["route_to_ui", "save_to_supabase"]]
+  },
+  {
+    "id": "parse_state",
+    "type": "function",
+    "z": "tab_eyesafeu",
+    "name": "Parse State",
+    "func": "// topic: eyesafeu/worker/W001/state\n// payload: { state: 'SOS' | 'Fall Detected' | 'Normal' }\n\nconst topicParts = msg.topic.split('/');\nconst workerId = topicParts[2];\n\nmsg.payload = {\n    id: workerId,\n    state: msg.payload.state || msg.payload.status\n};\n\n// لو SOS أو Fall → سجّل في incidents\nif (msg.payload.state === 'SOS' || msg.payload.state === 'Fall Detected') {\n    msg.supabaseTable = 'incidents';\n    msg.supabaseRow = {\n        worker_id: workerId,\n        incident_type: msg.payload.state === 'SOS' ? 'SOS' : 'Fall',\n        severity: 'Critical',\n        description: msg.payload.state === 'SOS'\n            ? 'SOS Button Pressed'\n            : 'Fall Detected - immediate attention required'\n    };\n    const incidentMsg = { ...msg };\n    node.send([msg, incidentMsg]);\n} else {\n    node.send([msg, null]);\n}",
+    "outputs": 2,
+    "x": 340,
+    "y": 160,
+    "wires": [["route_to_ui"], ["save_to_supabase"]]
+  },
+  {
+    "id": "parse_zone",
+    "type": "function",
+    "z": "tab_eyesafeu",
+    "name": "Parse Zone",
+    "func": "// topic: eyesafeu/worker/W001/zone\n// payload: { zone: 'Assembly Area', inZone: true }\n\nconst topicParts = msg.topic.split('/');\nconst workerId = topicParts[2];\n\nmsg.payload = {\n    id: workerId,\n    zone: msg.payload.zone || msg.payload.current_zone,\n    inZone: msg.payload.inZone !== undefined ? msg.payload.inZone : msg.payload.is_inside_zone === 1\n};\n\nmsg.supabaseTable = 'zone_activity_logs';\nmsg.supabaseRow = {\n    worker_id: workerId,\n    current_zone: msg.payload.zone,\n    is_inside_zone: msg.payload.inZone ? 1 : 0\n};\n\nreturn msg;",
+    "outputs": 1,
+    "x": 340,
+    "y": 240,
+    "wires": [["route_to_ui", "save_to_supabase"]]
+  },
+  {
+    "id": "route_to_ui",
+    "type": "function",
+    "z": "tab_eyesafeu",
+    "name": "Format for uibuilder",
+    "func": "// uibuilder بيستقبل msg.payload مباشرة\n// الفرونت بيقرأ msg.payload.id عشان يعرف أي عامل\n\n// تأكد إن الـ payload صح\nif (!msg.payload || !msg.payload.id) {\n    node.warn('Missing worker id in payload');\n    return null;\n}\n\nreturn msg;",
+    "outputs": 1,
+    "x": 580,
+    "y": 80,
+    "wires": [["uibuilder_out"]]
+  },
+  {
+    "id": "uibuilder_out",
+    "type": "uibuilder",
+    "z": "tab_eyesafeu",
+    "name": "EyeSafeU Dashboard",
+    "topic": "",
+    "url": "eyesafeu",
+    "fwdInMessages": false,
+    "allowScripts": false,
+    "allowStyles": false,
+    "copyIndex": true,
+    "x": 800,
+    "y": 80,
+    "wires": [[], []]
+  },
+  {
+    "id": "save_to_supabase",
+    "type": "function",
+    "z": "tab_eyesafeu",
+    "name": "Prepare Supabase Insert",
+    "func": "// جهّز الـ HTTP request لـ Supabase REST API\nconst SUPABASE_URL = 'https://dyvfmqazhtcchnootiuw.supabase.co';\nconst SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR5dmZtcWF6aHRjY2hub290aXV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1ODM2OTQsImV4cCI6MjA5MTE1OTY5NH0.fAijnDTQZyEboV_u22zP0pckEUPQetV_rE9WPPlY9NA';\n\nif (!msg.supabaseTable || !msg.supabaseRow) {\n    return null;\n}\n\nmsg.method = 'POST';\nmsg.url = `${SUPABASE_URL}/rest/v1/${msg.supabaseTable}`;\nmsg.headers = {\n    'apikey': SUPABASE_KEY,\n    'Authorization': `Bearer ${SUPABASE_KEY}`,\n    'Content-Type': 'application/json',\n    'Prefer': 'return=minimal'\n};\nmsg.payload = msg.supabaseRow;\n\nreturn msg;",
+    "outputs": 1,
+    "x": 580,
+    "y": 200,
+    "wires": [["http_supabase"]]
+  },
+  {
+    "id": "http_supabase",
+    "type": "http request",
+    "z": "tab_eyesafeu",
+    "name": "INSERT to Supabase",
+    "method": "use",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "x": 800,
+    "y": 200,
+    "wires": [["debug_supabase"]]
+  },
+  {
+    "id": "debug_supabase",
+    "type": "debug",
+    "z": "tab_eyesafeu",
+    "name": "Supabase Response",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1020,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "inject_test",
+    "type": "inject",
+    "z": "tab_eyesafeu",
+    "name": "Test: Send Vitals",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "eyesafeu/worker/W001/vitals",
+    "payload": "{\"heartRate\":85,\"temperature\":36.8}",
+    "payloadType": "json",
+    "x": 120,
+    "y": 360,
+    "wires": [["parse_vitals"]]
+  },
+  {
+    "id": "inject_test_sos",
+    "type": "inject",
+    "z": "tab_eyesafeu",
+    "name": "Test: SOS Alert",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "eyesafeu/worker/W001/state",
+    "payload": "{\"state\":\"SOS\"}",
+    "payloadType": "json",
+    "x": 120,
+    "y": 420,
+    "wires": [["parse_state"]]
+  },
+  {
+    "id": "inject_test_zone",
+    "type": "inject",
+    "z": "tab_eyesafeu",
+    "name": "Test: Zone Update",
+    "props": [
+      {
+        "p": "payload"
+      },
+      {
+        "p": "topic",
+        "vt": "str"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "eyesafeu/worker/W001/zone",
+    "payload": "{\"zone\":\"Assembly Area\",\"inZone\":true}",
+    "payloadType": "json",
+    "x": 120,
+    "y": 480,
+    "wires": [["parse_zone"]]
+  }
+]

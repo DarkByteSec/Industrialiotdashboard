@@ -10,9 +10,8 @@ import { IncidentChart } from '../components/IncidentChart';
 import { IncidentHistoryLog } from '../components/IncidentHistoryLog';
 import { DataFilterPanel, DateFilterType } from '../components/DataFilterPanel';
 import { AttendanceHistory } from '../components/AttendanceHistory';
-import { generateZoneActivity } from '../data/mockData';
+import { useWorkerDetails } from '../utils/useWorkerDetails';
 import {
-  generateAttendanceRecords,
   filterAttendanceByDateRange,
   getDateRangeForFilter,
 } from '../utils/attendanceUtils';
@@ -39,7 +38,7 @@ import autoTable from 'jspdf-autotable';
 export const WorkerDetails: React.FC = () => {
   const { workerId } = useParams<{ workerId: string }>();
   const navigate = useNavigate();
-  const { workers, getWorkerById } = useWorkers();
+  const { workers, getWorkerById, refetchWorkers } = useWorkers();
   const {
     markAsResolved,
     muteNotification,
@@ -48,12 +47,17 @@ export const WorkerDetails: React.FC = () => {
   } = useNotifications();
   const worker = getWorkerById(workerId || '');
 
-  const [zoneActivityData, setZoneActivityData] = useState<{ time: string; value: number }[]>([]);
+  // ── Supabase data via hook ──
+  const {
+    attendance: attendanceRecords,
+    incidents:  dbIncidents,
+    zoneActivity: zoneActivityData,
+    loading:    detailsLoading,
+    refetch:    refetchDetails,
+  } = useWorkerDetails(workerId || '');
+
   const [selectedIncidentId, setSelectedIncidentId] = useState<string | undefined>();
   const [hoveredAlertId, setHoveredAlertId] = useState<string | null>(null);
-  const [attendanceRecords, setAttendanceRecords] = useState(
-    worker ? generateAttendanceRecords(worker.id, 90) : []
-  );
   const [filteredAttendance, setFilteredAttendance] = useState(attendanceRecords);
   const [dateFilter, setDateFilter] = useState<{
     type: DateFilterType;
@@ -120,34 +124,12 @@ export const WorkerDetails: React.FC = () => {
     doc.save(`${worker.name}_Personal_Report.pdf`);
   };
 
+  // sync filteredAttendance when Supabase data loads
   useEffect(() => {
-    if (worker) {
-      setZoneActivityData(generateZoneActivity(worker.id, worker.inZone));
-      const records = generateAttendanceRecords(worker.id, 90);
-      setAttendanceRecords(records);
+    if (attendanceRecords.length > 0) {
       applyDateFilter('month');
     }
-  }, [worker]);
-
-  // Update zone activity in real-time
-  useEffect(() => {
-    if (!worker) return;
-
-    const interval = setInterval(() => {
-      setZoneActivityData((prevData) => {
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('en-US', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        });
-        const newData = [...prevData.slice(1), { time: timeStr, value: worker.inZone ? 1 : 0 }];
-        return newData;
-      });
-    }, 60000); // Update every minute
-
-    return () => clearInterval(interval);
-  }, [worker]);
+  }, [attendanceRecords]);
 
   const applyDateFilter = (
     filterType: DateFilterType,
@@ -184,7 +166,15 @@ export const WorkerDetails: React.FC = () => {
   }
 
   // Get worker-specific alerts from notification system
-  const workerAlerts = getAllAlerts().filter((alert) => alert.workerId === worker.id);
+  // بدمج الـ alerts اللي من Supabase مع اللي من NotificationContext (realtime)
+  const realtimeAlerts = getAllAlerts().filter((alert) => alert.workerId === worker.id);
+  const allAlertIds    = new Set(realtimeAlerts.map((a) => a.id));
+  const workerAlerts   = [
+    ...realtimeAlerts,
+    ...dbIncidents
+      .filter((inc) => !allAlertIds.has(inc.id))
+      .map((inc) => ({ ...inc, workerId: worker.id, workerName: worker.name, status: 'active' as const, soundPlayed: true })),
+  ].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
   const handleExportExcel = () => {
     toast.success(`Exporting ${worker.name}'s data to Excel...`, {

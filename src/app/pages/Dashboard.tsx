@@ -4,7 +4,7 @@ import { useWorkers } from '../context/WorkerContext';
 import { GlobalNavbar } from '../components/GlobalNavbar';
 import { FactoryMap } from '../components/FactoryMap';
 import { WorkerCard } from '../components/WorkerCard';
-import { FileDown, FileSpreadsheet, Users } from 'lucide-react';
+import { FileDown, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable'; // <-- التعديل هنا
 
 export const Dashboard: React.FC = () => {
-  const { workers } = useWorkers();
+  const { workers, loading, refetchWorkers } = useWorkers();
   
   // 1. هنا ضفنا الـ State اللي بيحفظ إنت دايس على أي فلتر (في البداية بيكون all)
   const [activeFilter, setActiveFilter] = useState<string>('all');
@@ -61,6 +61,15 @@ export const Dashboard: React.FC = () => {
   const warningCount = workers.filter((w) => w.status === 'warning').length;
   const dangerCount = workers.filter((w) => w.status === 'danger').length;
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-[#0F172A] flex flex-col items-center justify-center gap-4">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-slate-500 dark:text-slate-400 text-sm">Loading workers from database...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0F172A] transition-colors duration-300">
       <GlobalNavbar subtitle="Workforce Safety Dashboard" />
@@ -74,6 +83,9 @@ export const Dashboard: React.FC = () => {
               </Button>
               <Button onClick={handleExportPDF} variant="outline" className="bg-slate-50 dark:bg-[#334155] border-slate-300 dark:border-[#334155] text-slate-900 dark:text-[#F1F5F9] hover:bg-slate-100 dark:hover:bg-[#475569] transition-all duration-200">
                 <FileDown className="w-4 h-4 mr-2" /> Export All (PDF)
+              </Button>
+              <Button onClick={refetchWorkers} variant="outline" className="bg-slate-50 dark:bg-[#334155] border-slate-300 dark:border-[#334155] text-slate-900 dark:text-[#F1F5F9] hover:bg-slate-100 dark:hover:bg-[#475569] transition-all duration-200">
+                <RefreshCw className="w-4 h-4 mr-2" /> Refresh
               </Button>
             </div>
           </div>
